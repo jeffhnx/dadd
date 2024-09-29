@@ -114,24 +114,12 @@ game:GetService("RunService").RenderStepped:Connect(function()
         updateESPColors()
     end
 
-    -- Aim at the specified player's head if the crosshair is inside the ESP box
-    if aimbotEnabled and targetPlayerToAim then
-        aimAtPlayerHead(targetPlayerToAim) -- Aim at the specified target player
-    else
-        -- Attempt to target the player under the mouse cursor
-        local mouse = game.Players.LocalPlayer:GetMouse()
-        local targetPlayer = game.Players:GetPlayers()
-
-        for _, target in ipairs(targetPlayer) do
+    -- Aim at the specified player's head
+    if aimbotEnabled then
+        local players = game.Players:GetPlayers()
+        for _, target in ipairs(players) do
             if target ~= player and target.Character and target.Character:FindFirstChild("Head") then
-                local headPosition = target.Character.Head.Position
-                local screenPosition, onScreen = camera:WorldToScreenPoint(headPosition)
-                local boxSize = target.Character:GetExtentsSize() * 0.5
-
-                if onScreen and (mouse.X >= screenPosition.X - boxSize.X and mouse.X <= screenPosition.X + boxSize.X) and (mouse.Y >= screenPosition.Y - boxSize.Y and mouse.Y <= screenPosition.Y + boxSize.Y) then
-                    targetPlayerToAim = target -- Set target player to aim at
-                    break
-                end
+                aimAtPlayerHead(target) -- Aim at each player's head
             end
         end
     end

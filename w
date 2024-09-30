@@ -39,7 +39,7 @@ Environment.Settings = {
 	ThirdPersonSensitivity = 3, -- Boundary: 0.1 - 5
 	TriggerKey = "MouseButton2",
 	Toggle = false,
-	LockPart = "Torso" -- Body part to lock on
+	LockPart = "Head" -- Body part to lock on (changed to Head for higher aim)
 }
 
 Environment.FOVSettings = {
@@ -75,7 +75,7 @@ local function GetClosestPlayer()
 					if Environment.Settings.AliveCheck and v.Character:FindFirstChildOfClass("Humanoid").Health <= 0 then continue end
 					if Environment.Settings.WallCheck and #(Camera:GetPartsObscuringTarget({v.Character[Environment.Settings.LockPart].Position}, v.Character:GetDescendants())) > 0 then continue end
 
-					local Vector, OnScreen = Camera:WorldToViewportPoint(v.Character[Environment.Settings.LockPart].Position)
+					local Vector, OnScreen = Camera:WorldToViewportPoint(v.Character[Environment.Settings.LockPart].Position + Vector3.new(0, 5, 0)) -- Adjust aim position higher
 					local Distance = (Vector2(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y) - Vector2(Vector.X, Vector.Y)).Magnitude
 
 					if Distance < RequiredDistance and OnScreen then
@@ -124,18 +124,19 @@ local function Load()
 				if Environment.Settings.ThirdPerson then
 					Environment.Settings.ThirdPersonSensitivity = mathclamp(Environment.Settings.ThirdPersonSensitivity, 0.1, 5)
 
-					local Vector = Camera:WorldToViewportPoint(Environment.Locked.Character[Environment.Settings.LockPart].Position)
+					local Vector = Camera:WorldToViewportPoint(Environment.Locked.Character[Environment.Settings.LockPart].Position + Vector3.new(0, 5, 0)) -- Adjust aim position higher
 					mousemoverel((Vector.X - UserInputService:GetMouseLocation().X) * Environment.Settings.ThirdPersonSensitivity, (Vector.Y - UserInputService:GetMouseLocation().Y) * Environment.Settings.ThirdPersonSensitivity)
 				else
 					if Environment.Settings.Sensitivity > 0 then
-						Animation = TweenService:Create(Camera, TweenInfo.new(Environment.Settings.Sensitivity, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = CFrame.new(Camera.CFrame.Position, Environment.Locked.Character[Environment.Settings.LockPart].Position + Vector3.new(0, 5, 0))}) -- Aiming 5 units higher
+						Animation = TweenService:Create(Camera, TweenInfo.new(Environment.Settings.Sensitivity, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = CFrame.new(Camera.CFrame.Position, Environment.Locked.Character[Environment.Settings.LockPart].Position + Vector3.new(0, 5, 0))}) -- Adjust aim position higher
 						Animation:Play()
 					else
-						Camera.CFrame = CFrame.new(Camera.CFrame.Position, Environment.Locked.Character[Environment.Settings.LockPart].Position + Vector3.new(0, 5, 0)) -- Aiming 5 units higher
+						Camera.CFrame = CFrame.new(Camera.CFrame.Position, Environment.Locked.Character[Environment.Settings.LockPart].Position + Vector3.new(0, 5, 0)) -- Adjust aim position higher
 					end
 				end
 
-				Environment.FOVCircle.Color = Environment.FOVSettings.LockedColor
+			Environment.FOVCircle.Color = Environment.FOVSettings.LockedColor
+
 			end
 		end
 	end)
@@ -227,7 +228,7 @@ function Environment.Functions:ResetSettings()
 		ThirdPersonSensitivity = 3, -- Boundary: 0.1 - 5
 		TriggerKey = "MouseButton2",
 		Toggle = false,
-		LockPart = "Torso" -- Body part to lock on
+		LockPart = "Head" -- Body part to lock on
 	}
 
 	Environment.FOVSettings = {
@@ -238,11 +239,4 @@ function Environment.Functions:ResetSettings()
 		LockedColor = Color3.fromRGB(255, 70, 70),
 		Transparency = 0.5,
 		Sides = 60,
-		Thickness = 1,
-		Filled = false
-	}
-end
-
---// Load
-
-Load()
+		Thickness

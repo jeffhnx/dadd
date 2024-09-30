@@ -1,126 +1,249 @@
--- Variables
-local player = game.Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local camera = game.Workspace.CurrentCamera
-local espEnabled = false -- ESP starts off
-local highlightObjects = {}
-local targetPlayerToAim = nil -- The player you want to aim at
-local aimbotEnabled = false -- Aimbot tracking status
+--// Cache
 
--- Function to create a rainbow effect
-local function getRainbowColor(t)
-    local r = math.sin(t) * 0.5 + 0.5
-    local g = math.sin(t + 2 * math.pi / 3) * 0.5 + 0.5
-    local b = math.sin(t + 4 * math.pi / 3) * 0.5 + 0.5
-    return Color3.new(r, g, b)
-end
+local select = select
+local pcall, getgenv, next, Vector2, mathclamp, type, mousemoverel = select(1, pcall, getgenv, next, Vector2.new, math.clamp, type, mousemoverel or (Input and Input.MouseMove))
 
--- Function to create or update the highlight object (ESP)
-local function highlightPlayer(targetPlayer)
-    if not highlightObjects[targetPlayer.Name] then
-        local highlight = Instance.new("Highlight")
-        highlight.Adornee = targetPlayer.Character
-        highlight.FillTransparency = 0.5 -- Semi-transparent glow
-        highlight.OutlineTransparency = 0 -- Visible outline
-        highlightObjects[targetPlayer.Name] = highlight
-        highlight.Parent = targetPlayer.Character
-        
-        -- Create ESP box
-        local box = Instance.new("BoxHandleAdornment")
-        box.Adornee = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-        box.Size = targetPlayer.Character:GetExtentsSize() + Vector3.new(0.5, 0.5, 0.5) -- Slightly larger than the player
-        box.Color3 = Color3.new(1, 0, 0) -- Color of the box (red)
-        box.Transparency = 0.5 -- Semi-transparent box
-        box.ZIndex = 10 -- Render priority
-        box.Parent = targetPlayer.Character
-    end
-end
+--// Preventing Multiple Processes
 
--- Function to update ESP colors (rainbow glow effect)
-local function updateESPColors()
-    local t = tick()
-    for _, highlight in pairs(highlightObjects) do
-        if highlight and highlight.Parent then
-            highlight.FillColor = getRainbowColor(t)
-            highlight.OutlineColor = getRainbowColor(t + 0.5)
-        end
-    end
-end
-
--- Function to aim at a specific player's head
-local function aimAtPlayerHead(targetPlayer)
-    if targetPlayer.Character and targetPlayer.Character:FindFirstChild("Head") then
-        local targetHead = targetPlayer.Character.Head
-        -- Raycast to check if there's a direct line of sight (no walls in the way)
-        local origin = camera.CFrame.Position
-        local direction = (targetHead.Position - origin).unit * (targetHead.Position - origin).magnitude
-        local raycastParams = RaycastParams.new()
-        raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-        raycastParams.FilterDescendantsInstances = {player.Character} -- Ignore local player's character
-
-        local result = game.Workspace:Raycast(origin, direction, raycastParams)
-        if result and result.Instance:IsDescendantOf(targetPlayer.Character) then
-            camera.CFrame = CFrame.new(camera.CFrame.Position, targetHead.Position) -- Aim at the target head
-        end
-    end
-end
-
--- Toggle ESP on/off with "E"
-game:GetService("UserInputService").InputBegan:Connect(function(input, gameProcessedEvent)
-    if not gameProcessedEvent then
-        if input.KeyCode == Enum.KeyCode.E then
-            espEnabled = not espEnabled
-            if espEnabled then
-                -- Highlight all players for ESP
-                local players = game.Players:GetPlayers()
-                for _, targetPlayer in pairs(players) do
-                    if targetPlayer ~= player and targetPlayer.Character then
-                        highlightPlayer(targetPlayer)
-                    end
-                end
-            else
-                -- Clear highlights
-                for _, highlight in pairs(highlightObjects) do
-                    if highlight then
-                        highlight:Destroy()
-                    end
-                end
-                highlightObjects = {}
-            end
-        end
-    end
+pcall(function()
+	getgenv().Aimbot.Functions:Exit()
 end)
 
--- Detect holding right-click for aimbot (track player head)
-game:GetService("UserInputService").InputBegan:Connect(function(input, gameProcessedEvent)
-    if not gameProcessedEvent then
-        if input.UserInputType == Enum.UserInputType.MouseButton2 then
-            aimbotEnabled = true -- Enable aimbot (tracking starts)
-        end
-    end
+--// Environment
+
+getgenv().Aimbot = {}
+local Environment = getgenv().Aimbot
+
+--// Services
+
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+--// Variables
+
+local RequiredDistance, Typing, Running, Animation, ServiceConnections = 2000, false, false, nil, {}
+
+--// Script Settings
+
+Environment.Settings = {
+	Enabled = true,
+	TeamCheck = false,
+	AliveCheck = true,
+	WallCheck = false, -- Laggy
+	Sensitivity = 0, -- Animation length (in seconds) before fully locking onto target
+	ThirdPerson = false, -- Uses mousemoverel instead of CFrame to support locking in third person (could be choppy)
+	ThirdPersonSensitivity = 3, -- Boundary: 0.1 - 5
+	TriggerKey = "MouseButton2",
+	Toggle = false,
+	LockPart = "Head" -- Body part to lock on
+}
+
+Environment.FOVSettings = {
+	Enabled = false,
+	Visible = false,
+	Amount = 90,
+	Color = Color3.fromRGB(255, 255, 255),
+	LockedColor = Color3.fromRGB(255, 70, 70),
+	Transparency = 0.5,
+	Sides = 60,
+	Thickness = 1,
+	Filled = false
+}
+
+Environment.FOVCircle = Drawing.new("Circle")
+
+--// Functions
+
+local function CancelLock()
+	Environment.Locked = nil
+	if Animation then Animation:Cancel() end
+	Environment.FOVCircle.Color = Environment.FOVSettings.Color
+end
+
+local function GetClosestPlayer()
+	if not Environment.Locked then
+		RequiredDistance = (Environment.FOVSettings.Enabled and Environment.FOVSettings.Amount or 2000)
+
+		for _, v in next, Players:GetPlayers() do
+			if v ~= LocalPlayer then
+				if v.Character and v.Character:FindFirstChild(Environment.Settings.LockPart) and v.Character:FindFirstChildOfClass("Humanoid") then
+					if Environment.Settings.TeamCheck and v.Team == LocalPlayer.Team then continue end
+					if Environment.Settings.AliveCheck and v.Character:FindFirstChildOfClass("Humanoid").Health <= 0 then continue end
+					if Environment.Settings.WallCheck and #(Camera:GetPartsObscuringTarget({v.Character[Environment.Settings.LockPart].Position}, v.Character:GetDescendants())) > 0 then continue end
+
+					local Vector, OnScreen = Camera:WorldToViewportPoint(v.Character[Environment.Settings.LockPart].Position)
+					local Distance = (Vector2(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y) - Vector2(Vector.X, Vector.Y)).Magnitude
+
+					if Distance < RequiredDistance and OnScreen then
+						RequiredDistance = Distance
+						Environment.Locked = v
+					end
+				end
+			end
+		end
+	elseif (Vector2(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y) - Vector2(Camera:WorldToViewportPoint(Environment.Locked.Character[Environment.Settings.LockPart].Position).X, Camera:WorldToViewportPoint(Environment.Locked.Character[Environment.Settings.LockPart].Position).Y)).Magnitude > RequiredDistance then
+		CancelLock()
+	end
+end
+
+--// Typing Check
+
+ServiceConnections.TypingStartedConnection = UserInputService.TextBoxFocused:Connect(function()
+	Typing = true
 end)
 
-game:GetService("UserInputService").InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton2 then
-        aimbotEnabled = false -- Disable aimbot (tracking stops)
-        targetPlayerToAim = nil -- Clear target
-    end
+ServiceConnections.TypingEndedConnection = UserInputService.TextBoxFocusReleased:Connect(function()
+	Typing = false
 end)
 
--- Update ESP and aimbot every frame
-game:GetService("RunService").RenderStepped:Connect(function()
-    -- Update ESP colors
-    if espEnabled then
-        updateESPColors()
-    end
+--// Main
 
-    -- Aim at the specified player's head
-    if aimbotEnabled then
-        local players = game.Players:GetPlayers()
-        for _, target in ipairs(players) do
-            if target ~= player and target.Character and target.Character:FindFirstChild("Head") then
-                aimAtPlayerHead(target) -- Aim at each player's head
-            end
-        end
-    end
-end)
+local function Load()
+	ServiceConnections.RenderSteppedConnection = RunService.RenderStepped:Connect(function()
+		if Environment.FOVSettings.Enabled and Environment.Settings.Enabled then
+			Environment.FOVCircle.Radius = Environment.FOVSettings.Amount
+			Environment.FOVCircle.Thickness = Environment.FOVSettings.Thickness
+			Environment.FOVCircle.Filled = Environment.FOVSettings.Filled
+			Environment.FOVCircle.NumSides = Environment.FOVSettings.Sides
+			Environment.FOVCircle.Color = Environment.FOVSettings.Color
+			Environment.FOVCircle.Transparency = Environment.FOVSettings.Transparency
+			Environment.FOVCircle.Visible = Environment.FOVSettings.Visible
+			Environment.FOVCircle.Position = Vector2(UserInputService:GetMouseLocation().X, UserInputService:GetMouseLocation().Y)
+		else
+			Environment.FOVCircle.Visible = false
+		end
+
+		if Running and Environment.Settings.Enabled then
+			GetClosestPlayer()
+
+			if Environment.Locked then
+				if Environment.Settings.ThirdPerson then
+					Environment.Settings.ThirdPersonSensitivity = mathclamp(Environment.Settings.ThirdPersonSensitivity, 0.1, 5)
+
+					local Vector = Camera:WorldToViewportPoint(Environment.Locked.Character[Environment.Settings.LockPart].Position)
+					mousemoverel((Vector.X - UserInputService:GetMouseLocation().X) * Environment.Settings.ThirdPersonSensitivity, (Vector.Y - UserInputService:GetMouseLocation().Y) * Environment.Settings.ThirdPersonSensitivity)
+				else
+					if Environment.Settings.Sensitivity > 0 then
+						Animation = TweenService:Create(Camera, TweenInfo.new(Environment.Settings.Sensitivity, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = CFrame.new(Camera.CFrame.Position, Environment.Locked.Character[Environment.Settings.LockPart].Position)})
+						Animation:Play()
+					else
+						Camera.CFrame = CFrame.new(Camera.CFrame.Position, Environment.Locked.Character[Environment.Settings.LockPart].Position)
+					end
+				end
+
+			Environment.FOVCircle.Color = Environment.FOVSettings.LockedColor
+
+			end
+		end
+	end)
+
+	ServiceConnections.InputBeganConnection = UserInputService.InputBegan:Connect(function(Input)
+		if not Typing then
+			pcall(function()
+				if Input.KeyCode == Enum.KeyCode[Environment.Settings.TriggerKey] then
+					if Environment.Settings.Toggle then
+						Running = not Running
+
+						if not Running then
+							CancelLock()
+						end
+					else
+						Running = true
+					end
+				end
+			end)
+
+			pcall(function()
+				if Input.UserInputType == Enum.UserInputType[Environment.Settings.TriggerKey] then
+					if Environment.Settings.Toggle then
+						Running = not Running
+
+						if not Running then
+							CancelLock()
+						end
+					else
+						Running = true
+					end
+				end
+			end)
+		end
+	end)
+
+	ServiceConnections.InputEndedConnection = UserInputService.InputEnded:Connect(function(Input)
+		if not Typing then
+			if not Environment.Settings.Toggle then
+				pcall(function()
+					if Input.KeyCode == Enum.KeyCode[Environment.Settings.TriggerKey] then
+						Running = false; CancelLock()
+					end
+				end)
+
+				pcall(function()
+					if Input.UserInputType == Enum.UserInputType[Environment.Settings.TriggerKey] then
+						Running = false; CancelLock()
+					end
+				end)
+			end
+		end
+	end)
+end
+
+--// Functions
+
+Environment.Functions = {}
+
+function Environment.Functions:Exit()
+	for _, v in next, ServiceConnections do
+		v:Disconnect()
+	end
+
+	if Environment.FOVCircle.Remove then Environment.FOVCircle:Remove() end
+
+	getgenv().Aimbot.Functions = nil
+	getgenv().Aimbot = nil
+	
+	Load = nil; GetClosestPlayer = nil; CancelLock = nil
+end
+
+function Environment.Functions:Restart()
+	for _, v in next, ServiceConnections do
+		v:Disconnect()
+	end
+
+	Load()
+end
+
+function Environment.Functions:ResetSettings()
+	Environment.Settings = {
+		Enabled = true,
+		TeamCheck = false,
+		AliveCheck = true,
+		WallCheck = false,
+		Sensitivity = 0, -- Animation length (in seconds) before fully locking onto target
+		ThirdPerson = false, -- Uses mousemoverel instead of CFrame to support locking in third person (could be choppy)
+		ThirdPersonSensitivity = 3, -- Boundary: 0.1 - 5
+		TriggerKey = "MouseButton2",
+		Toggle = false,
+		LockPart = "Head" -- Body part to lock on
+	}
+
+	Environment.FOVSettings = {
+		Enabled = false,
+		Visible = false,
+		Amount = 90,
+		Color = Color3.fromRGB(255, 255, 255),
+		LockedColor = Color3.fromRGB(255, 70, 70),
+		Transparency = 0.5,
+		Sides = 60,
+		Thickness = 1,
+		Filled = false
+	}
+end
+
+--// Load
+
+Load()
